@@ -1,0 +1,199 @@
+---
+title: "Practical Machine Learning Project"
+author: "sc"
+date: "7/11/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Background
+
+Many People collect data about the quantity of their exercise activity with devices such as Jawbone Up, Nike FuelBand, and Fitbit .
+This project investigates the possibility of using such data to quantify activity performance. The goal of this  project is to predict performance quality  using  the "classe" variable in the training set.
+
+###Accelerometer data
+training data:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+test data:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+###Source and More information:
+
+source: http://groupware.les.inf.puc-rio.br/har. 
+
+
+
+
+###Load and Clean Data
+
+```{r read, message=FALSE}
+library(caret)
+library(gridExtra)
+
+training = read.csv("~/Desktop/PML/pml-training.csv",na.strings=c("NA","#DIV/0!",""))
+testing  = read.csv("~/Desktop/PML/pml-testing.csv",na.strings=c("NA","#DIV/0!",""))
+
+#c("NA","#DIV/0!","")replaces empty + Excel/error strings #DIV/0! by NAs. 
+
+```
+Remove  columns with zero or near zero variance.. likely
+to have little predictive value.
+```{r zero variance}
+
+zero.var<-nearZeroVar(training,saveMetrics  = TRUE)
+training <- training[, !zero.var$nzv]
+training<-training[,-(1:6)]
+
+```
+
+###investigate missing values
+```{r graph missing values, message=FALSE}
+library(VIM)
+library(plyr)
+library(dplyr)
+
+#library(mice)
+#library(VIM)
+aggr(training,prop=FALSE,numbers=TRUE)
+
+```
+From the graph above (left) , we see that columns either have no or almost no missing values or most values missing.Further exploration below confirms  55% of columns have missing values and those 55% have  an average 98% of values  missing. This is dissapointing as it makes successful imputation optimistic , so the missing value columns will be removed.
+
+
+```{r explore mv}
+
+na_count <-sapply(training, function(y) sum(length(which(is.na(y)))))
+
+block.na<-na_count[na_count>0]
+print("percentage of columns with any missing values")
+round(length(block.na)/ncol(training),4)*100
+
+print("percentage of missing values  in columns with any missing values")
+round(mean(block.na)/nrow(training),4) *100
+
+```
+```{r remove mv cols}
+
+#remove columns with missing values
+training.no.na = colSums(is.na(training)) == 0
+testing.no.na = colSums(is.na(testing)) == 0
+
+
+training = training[, training.no.na]
+testing = testing[, testing.no.na]
+```
+
+```{r split the training data}
+
+inTrain <- createDataPartition(y=training$classe, p=0.80, list=FALSE)
+train1 <- training[inTrain, ] 
+test1<- training[-inTrain, ]
+
+
+```
+
+
+#Variable relationships with rpart
+
+
+```{r  tree}
+
+library(rpart)
+library(rpart.plot)
+modelTree <- rpart(classe ~ ., data = train1, method = "class")
+
+prp(modelTree)
+
+```
+We will look at some three different models and compare accuracy. Above rpart.plot gives an idea as to the relative importance of the different models.
+
+###1)   Naive Bayes Model
+
+```{r pred.ns, message=FALSE,warning=FALSE,verbose=FALSE }
+library(e1071)
+
+modnb <- train(classe~.,data=train1,method="nb",trControl=trainControl(method='cv',number=10),verbose=FALSE)
+modnb
+y=test1$classe
+confusionMatrix(predict(modnb$finalModel,test1)$class, y)
+
+```
+
+
+
+###2) Generalised Boosted Regression Model,using Trees
+
+
+
+```{r, message=FALSE} 
+set.seed(333)
+#Generalised boosted regression machine
+modgbm <- train(classe ~ ., method = "gbm", data = train1, verbose = F, trControl = trainControl(method = "cv", number = 10))
+
+
+
+```
+
+
+```{r}
+predgbm <- predict(modgbm, test1)
+confusionMatrix(predgbm, test1$classe)
+```
+
+
+
+
+
+### 3) Random Forest Model
+
+
+
+
+
+
+
+```{r fancyrf ,method=FALSE, message= FALSE}
+#creating predictive model using random forests
+control <- trainControl(method="cv", 5)
+modrf <- train(classe ~ ., data=train1, method="rf", trControl=control, ntree=250,verbose=FALSE)
+modrf
+
+#prediction 
+
+predrf <- predict(modrf, test1)
+
+
+#comparison of the prediction and the test sub-dataset, with accuracy and OOSE values
+table(predrf, test1$classe)
+confusionMatrix(predrf,test1$classe)
+
+
+```
+### Selecting the Best model
+We can see that accuracy for Naive Bayes, Generalised Boosted Regression and Random Forest models were 0.7397,0.9651 and 0.9944 respectively.In Fact, Random Forest outperforms the other variables on all measures. Calculating the out of sample error for this model gives 0.00056.
+
+### Out of Sample Error
+
+```{r ose}
+#Prediction Accuracy
+accuracy <- postResample(predrf, test1$classe)
+accuracy
+plot(modrf)
+
+#out-of-sample error
+ose <- 1 - accuracy[[1]]
+ose 
+```
+
+### Applying Random Forest to predict class values for the testing Data Set.
+
+```{r, predictions}
+result <- predict(modrf, testing)
+result
+```
+
